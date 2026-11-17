@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only token: CI only builds and tests
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Terraform, Manifests & App
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Setup Task
+        uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Same command as locally: terraform fmt/validate/tflint, kubeconform, cargo fmt/clippy/test
+      - name: Run Checks
+        run: task check
+
+      - name: Build Demo App Image
+        run: task app:build
+
+  e2e:
+    name: End-to-end on kind
+    # Argo CD syncs from GitHub, so this only proves what is already on main.
+    if: github.event_name != 'pull_request'
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Setup Task
+        uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Platform
+        run: task up
+
+      - name: Show Status
+        if: always()
+        run: task status
+
+      - name: Demo App Answers Through Ingress
+        run: curl --fail --retry 10 --retry-delay 5 --retry-connrefused http://localhost:8080/
+
+      - name: Destroy Platform
+        if: always()
+        run: task down

@@ -1,0 +1,34 @@
+[package]
+name = "demo-app"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+axum = "0.8"
+prometheus = { version = "0.13", default-features = false }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# Guardrails for AI agents: enforced by the compiler instead of written instructions
+unwrap_used = "warn"
+expect_used = "warn"
+allow_attributes = "warn" # use #[expect(..., reason = "...")]: it fails once the lint no longer fires
+allow_attributes_without_reason = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+indexing_slicing = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

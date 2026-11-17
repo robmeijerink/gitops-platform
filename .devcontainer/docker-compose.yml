@@ -1,0 +1,34 @@
+services:
+  # Infra toolbox: terraform, kubectl, helm, kind, kubeconform, tflint.
+  # Talks to the host Docker daemon (kind creates its nodes there) and, via host
+  # networking, to the cluster API server on localhost.
+  tools:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /workspace
+    network_mode: host
+    environment:
+      KUBECONFIG: /workspace/.kube/config
+      TF_DATA_DIR: /workspace/.terraform-data
+      TF_IN_AUTOMATION: "1"
+    volumes:
+      - ..:/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: sleep infinity
+
+  # Demo app toolchain (Rust), same conventions as rust-skeleton.
+  app:
+    image: rust:1-trixie
+    working_dir: /workspace/apps/demo-app
+    volumes:
+      - ..:/workspace
+      - rust_cargo:/usr/local/cargo
+      - rust_rustup:/usr/local/rustup
+    command: sleep infinity
+
+volumes:
+  rust_cargo:
+    external: true
+  rust_rustup:
+    external: true

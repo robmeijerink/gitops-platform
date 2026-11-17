@@ -1,0 +1,5 @@
+.git/
+.terraform-data/
+.kube/
+apps/demo-app/target/
+.DS_Store

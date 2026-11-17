@@ -1,0 +1,26 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: demo-app
+  labels:
+    app.kubernetes.io/name: demo-app
+spec:
+  groups:
+    - name: demo-app
+      rules:
+        - alert: DemoAppHighErrorRate
+          expr: |
+            sum(rate(http_requests_total{job="demo-app",status=~"5.."}[5m]))
+              / sum(rate(http_requests_total{job="demo-app"}[5m])) > 0.05
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: demo-app returns more than 5% 5xx responses
+        - alert: DemoAppDown
+          expr: up{job="demo-app"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: demo-app target is down

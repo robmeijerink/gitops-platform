@@ -1,0 +1,16 @@
+{
+  "name": "gitops-platform",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "tools",
+  "initializeCommand": "docker volume create rust_cargo && docker volume create rust_rustup",
+  "workspaceFolder": "/workspace",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "hashicorp.terraform",
+        "redhat.vscode-yaml",
+        "rust-lang.rust-analyzer"
+      ]
+    }
+  }
+}

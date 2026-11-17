@@ -1,0 +1,188 @@
+version: "3"
+
+vars:
+  COMPOSE: docker compose -f .devcontainer/docker-compose.yml
+  TOOLS: "{{.COMPOSE}} run --rm tools"
+  CARGO: "{{.COMPOSE}} run --rm app cargo"
+  TF_DIR: infra/environments/local
+  CLUSTER: gitops-platform
+  IMAGE: demo-app:local
+
+# Unique Compose project per checkout (matches the name VS Code Dev Containers uses)
+env:
+  COMPOSE_PROJECT_NAME: '{{regexReplaceAll "[^a-z0-9_-]" (lower (base .ROOT_DIR)) ""}}_devcontainer'
+
+tasks:
+  # ==========================================
+  # System
+  # ==========================================
+  default:
+    desc: Open the interactive task menu
+    silent: true
+    cmds:
+      - task: search
+
+  search:
+    desc: Open the interactive task menu
+    silent: true
+    cmds:
+      - |
+        CHOICE=$(task --list | grep '^\*' | grep -vE 'default|search' | fzf --reverse --border="rounded" --prompt="Search task: " --pointer=">")
+        if [ -n "$CHOICE" ]; then
+          TASK_NAME=$(echo "$CHOICE" | awk '{print $2}' | sed 's/:$//')
+          echo -e "\033[1;32mRunning:\033[0m task $TASK_NAME\n"
+          task "$TASK_NAME"
+        fi
+
+  volumes:
+    desc: Create the Rust toolchain cache volumes shared by all projects
+    internal: true
+    silent: true
+    run: once
+    cmds:
+      - docker volume create rust_cargo > /dev/null
+      - docker volume create rust_rustup > /dev/null
+
+  build:
+    desc: Build the toolbox image
+    internal: true
+    silent: true
+    run: once
+    cmds:
+      - "{{.COMPOSE}} build tools"
+
+  # ==========================================
+  # Platform
+  # ==========================================
+  up:
+    desc: Create the cluster, install Argo CD and let it sync everything
+    deps: [build]
+    cmds:
+      - task: app:load
+      - "{{.TOOLS}} terraform -chdir={{.TF_DIR}} init -input=false"
+      - "{{.TOOLS}} terraform -chdir={{.TF_DIR}} apply -auto-approve -input=false"
+      - task: wait
+      - |
+        echo ""
+        echo "Platform is up. Next:"
+        echo "  task argocd:ui    -> https://localhost:8443  (admin)"
+        echo "  task grafana:ui   -> http://localhost:3000   (admin)"
+        echo "  curl http://localhost:8080/  (demo app via ingress)"
+
+  down:
+    desc: Destroy the cluster and all Terraform-managed resources
+    deps: [build]
+    cmds:
+      - "{{.TOOLS}} terraform -chdir={{.TF_DIR}} destroy -auto-approve -input=false"
+
+  plan:
+    desc: Show what Terraform would change
+    deps: [build]
+    cmds:
+      - "{{.TOOLS}} terraform -chdir={{.TF_DIR}} init -input=false"
+      - "{{.TOOLS}} terraform -chdir={{.TF_DIR}} plan -input=false"
+
+  tf:
+    desc: Run any Terraform command in the local environment (task tf -- state list)
+    deps: [build]
+    cmds:
+      - "{{.TOOLS}} terraform -chdir={{.TF_DIR}} {{.CLI_ARGS}}"
+
+  kubectl:
+    desc: Run any kubectl command against the cluster (task kubectl -- get pods -A)
+    deps: [build]
+    cmds:
+      - "{{.TOOLS}} kubectl {{.CLI_ARGS}}"
+
+  wait:
+    desc: Wait until every Argo CD application is Synced and Healthy
+    deps: [build]
+    cmds:
+      - |
+        {{.TOOLS}} sh -c '
+          for i in $(seq 1 90); do
+            apps=$(kubectl get applications -n argocd --no-headers 2>/dev/null | wc -l)
+            ok=$(kubectl get applications -n argocd --no-headers 2>/dev/null | grep -c "Synced *Healthy")
+            echo "Argo CD applications ready: $ok/$apps"
+            [ "$apps" -ge 3 ] && [ "$ok" -eq "$apps" ] && exit 0
+            sleep 10
+          done
+          kubectl get applications -n argocd
+          exit 1'
+
+  status:
+    desc: Show Argo CD applications and pods
+    deps: [build]
+    cmds:
+      - "{{.TOOLS}} kubectl get applications -n argocd"
+      - "{{.TOOLS}} kubectl get pods -A"
+
+  argocd:ui:
+    desc: Port-forward the Argo CD UI to https://localhost:8443 and print the admin password
+    deps: [build]
+    cmds:
+      - |
+        {{.TOOLS}} sh -c '
+          echo "admin password: $(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)"
+          kubectl -n argocd port-forward svc/argocd-server 8443:443'
+
+  grafana:ui:
+    desc: Port-forward Grafana to http://localhost:3000 and print the admin password
+    deps: [build]
+    cmds:
+      - |
+        {{.TOOLS}} sh -c '
+          echo "admin password: $(kubectl -n monitoring get secret kube-prometheus-stack-grafana -o jsonpath="{.data.admin-password}" | base64 -d)"
+          kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80'
+
+  # ==========================================
+  # Demo app
+  # ==========================================
+  app:check:
+    desc: Format, lint (warnings are errors) and test the demo app
+    deps: [volumes]
+    cmds:
+      - "{{.CARGO}} fmt --all"
+      - "{{.CARGO}} clippy --all-targets -- -D warnings"
+      - "{{.CARGO}} test"
+
+  app:build:
+    desc: Build the demo app container image ({{.IMAGE}})
+    cmds:
+      - docker build -t {{.IMAGE}} apps/demo-app
+
+  app:load:
+    desc: Build the demo app image and load it into the kind cluster (if it exists)
+    cmds:
+      - task: app:build
+      - |
+        if docker ps --format '{{"{{.Names}}"}}' | grep -q '^{{.CLUSTER}}-control-plane$'; then
+          {{.TOOLS}} kind load docker-image {{.IMAGE}} --name {{.CLUSTER}}
+        fi
+
+  # ==========================================
+  # Quality
+  # ==========================================
+  check:
+    desc: Run every check (Terraform, manifests, app). Run after every change.
+    deps: [build]
+    cmds:
+      - task: tf:check
+      - task: manifests:check
+      - task: app:check
+
+  tf:check:
+    desc: terraform fmt, validate and tflint
+    deps: [build]
+    cmds:
+      - "{{.TOOLS}} terraform fmt -check -recursive infra"
+      - "{{.TOOLS}} terraform -chdir={{.TF_DIR}} init -backend=false -input=false"
+      - "{{.TOOLS}} terraform -chdir={{.TF_DIR}} validate"
+      - "{{.TOOLS}} tflint --chdir=infra --recursive"
+
+  manifests:check:
+    desc: Render Kustomize overlays and validate them with kubeconform
+    deps: [build]
+    cmds:
+      - "{{.TOOLS}} sh -c 'kubectl kustomize gitops/apps/demo-app/overlays/local | kubeconform -strict -ignore-missing-schemas -summary'"
+      - "{{.TOOLS}} sh -c 'kubeconform -strict -ignore-missing-schemas -summary gitops/bootstrap gitops/platform'"

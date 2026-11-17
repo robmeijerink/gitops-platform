@@ -1,0 +1,29 @@
+# Loaded by the Grafana sidecar (label grafana_dashboard), which watches all namespaces.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-app-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  demo-app.json: |
+    {
+      "title": "Demo app",
+      "uid": "demo-app",
+      "schemaVersion": 39,
+      "time": { "from": "now-30m", "to": "now" },
+      "refresh": "10s",
+      "panels": [
+        {
+          "type": "timeseries", "title": "Requests per second",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "targets": [{ "expr": "sum by (status) (rate(http_requests_total{job=\"demo-app\"}[1m]))", "legendFormat": "{{status}}" }]
+        },
+        {
+          "type": "timeseries", "title": "Latency p95 (s)",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "targets": [{ "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"demo-app\"}[5m])))", "legendFormat": "p95" }]
+        }
+      ]
+    }
